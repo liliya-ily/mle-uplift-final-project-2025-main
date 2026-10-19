@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Окружения
+.venv/
+venv/
+uplift_env/
+env/
+.env
+
+# Служебные файлы обучения и экспериментов
+catboost_info/
+mlruns/
+
+# Библиотека курса клонируется отдельно (см. README)
+scikit_uplift/
+
+# Служебные файлы ассистента
+CLAUDE.md
+CLAUDE.local.md
