@@ -1,7 +1,7 @@
 # Uplift-моделирование: кому предлагать промокод
 
 ![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white)
-![causalml](https://img.shields.io/badge/causalml-0.14.1-0F9D58?style=flat-square)
+![causalml](https://img.shields.io/badge/causalml-0.15.5-0F9D58?style=flat-square)
 ![scikit-uplift](https://img.shields.io/badge/scikit--uplift-0.5.1-E25A1C?style=flat-square)
 ![CatBoost](https://img.shields.io/badge/CatBoost-1.2.8-FFCC00?style=flat-square)
 ![Optuna](https://img.shields.io/badge/Optuna-4.4.0-2C6DB4?style=flat-square)
@@ -36,36 +36,69 @@
 **Часть 1. Методы uplift-моделирования**
 - Первичная подготовка данных и EDA: баланс контрольной и тестовой групп, распределения признаков, корреляции.
 - Проверка статистической значимости: χ²-тест для двух долей. Отклик в тестовой группе 16,02 % против 15,27 % в контрольной (+0,75 п.п., p = 0,0199).
-- Три uplift-подхода из `causalml`: `UpliftRandomForestClassifier` (baseline), S-learner и T-learner на `RandomForestClassifier` с одинаковыми гиперпараметрами. Разбиение 80/20 со стратификацией по `treatment` и `target`, `random_state=42`.
+- Три uplift-подхода из `causalml`: `UpliftRandomForestClassifier` (baseline), S-learner и T-learner на `RandomForestClassifier` с одинаковыми гиперпараметрами. Разбиение 80/20 со стратификацией по `treatment` и `target`, `random_state=42`. Важность признаков baseline-модели.
 
 **Часть 2. Улучшение модели**
 - Эксперименты с базовыми алгоритмами (логистическая регрессия, случайный лес, CatBoost) и новыми признаками (бины `history` по квантилям).
 - Подбор гиперпараметров Optuna (метрика Uplift@30).
 - Визуализации: кривые Uplift и Qini, uplift по перцентилям.
+- Проверка устойчивости выбора модели кросс-валидацией (15 разбиений, семь подходов).
 - Класс `UpliftModelInference` для передачи в продакшн: проверка входных данных, преобразование, предсказание uplift.
 
 ## Результаты
 
-Метрики на тестовой выборке (20 %):
+Метрики на отложенной выборке (20 %). Uplift@30 — метрика курса; Uplift AUC и Qini AUC оценивают ранжирование на всей аудитории и менее чувствительны к случайности:
 
-| Модель | Uplift AUC | Qini AUC | Uplift@30% |
+| Модель | Uplift@30 | Uplift AUC | Qini AUC |
 |---|---:|---:|---:|
-| Uplift Random Forest (baseline) | 0,0310 | 0,0659 | 0,0494 |
-| **S-learner (RandomForest)** | 0,0296 | 0,0623 | **0,0518** |
-| T-learner (RandomForest) | 0,0283 | 0,0595 | 0,0449 |
+| Uplift Random Forest (baseline) | 0,0494 | **0,0310** | **0,0659** |
+| S-learner (RandomForest) | **0,0518** | 0,0296 | 0,0623 |
+| T-learner (RandomForest) | 0,0449 | 0,0283 | 0,0595 |
 
-Выбран S-learner: у него лучший Uplift@30 (0,0518, выше порога 0,050), он проще и устойчивее остальных. Подбор гиперпараметров Optuna и замена базового алгоритма (логистическая регрессия, CatBoost) прироста не дали (Uplift@30 около 0,04–0,05). На графике uplift по перцентилям эффект промокода положителен в верхних 30 % аудитории и снижается в нижних, то есть промокод имеет смысл предлагать верхней части ранжированного списка.
+S-learner показал лучший Uplift@30 (0,0518, выше порога 0,050), baseline UpliftRandomForest лучше по Uplift AUC и Qini AUC. Подбор гиперпараметров Optuna и замена базового алгоритма (логистическая регрессия, CatBoost) прироста не дали.
 
-Подробности, графики и выводы: ноутбук `final_project_template.ipynb`.
+### Uplift по перцентилям
+
+Клиенты разбиты на 10 групп по предсказанному uplift (baseline-модель). Эффект промокода положителен в верхних 40 % списка, около нуля в середине и отрицателен в нижних группах, поэтому промокод имеет смысл предлагать верхней части ранжированного списка.
+
+![Uplift по перцентилям](figures/uplift_by_percentile_baseline.png)
+
+### Важность признаков
+
+Наибольший вклад в разбиения деревьев дают сумма трат за год (`history`), покупки мужских товаров (`mens`) и давность последней покупки (`recency`).
+
+![Важность признаков](figures/feature_importance.png)
+
+### Устойчивость выбора модели
+
+Значение Uplift@30 на одном разбиении сильно зависит от случайности, поэтому семь подходов сравнены на 15 разбиениях (5 блоков × 3 повтора со стратификацией по `treatment` и `target`):
+
+| Модель | Uplift@30, среднее ± std | Qini AUC |
+|---|---:|---:|
+| **UpliftRF (параметры baseline)** | **0,0415 ± 0,0088** | 0,0499 |
+| UpliftRF, критерий KL, глубина 7 | 0,0406 ± 0,0099 | 0,0471 |
+| T-learner RF | 0,0402 ± 0,0083 | 0,0452 |
+| UpliftRF, критерий ED, глубина 6 | 0,0386 ± 0,0087 | 0,0514 |
+| S-learner RF | 0,0352 ± 0,0105 | 0,0439 |
+| X-learner RF (propensity score) | 0,0340 ± 0,0103 | 0,0442 |
+| S-learner CatBoost | 0,0340 ± 0,0091 | 0,0504 |
+
+![Uplift@30 по 15 разбиениям](figures/cv_uplift_at_30.png)
+
+По среднему качеству и по Qini AUC лучше выглядит uplift-лес, поэтому для внедрения рекомендуется `UpliftRandomForestClassifier`; S-learner остаётся моделью с лучшим Uplift@30 на отложенной выборке курса. Код эксперимента и результаты: папка `experiments/`.
+
+Подробности, остальные графики и выводы: ноутбук `final_project_template.ipynb`.
 
 ## Структура репозитория
 
 ```text
 .
-├── final_project_template.ipynb   # EDA, модели, подбор гиперпараметров, класс для инференса
+├── final_project_template.ipynb   # EDA, модели, подбор гиперпараметров, кросс-валидация, класс для инференса
 ├── utils.py                       # график uplift по перцентилям
 ├── uplift_fp_data.csv             # данные A/B-теста
 ├── requirements.txt
+├── experiments/                   # кросс-валидация подходов: скрипт, результаты, Dockerfile
+├── figures/                       # графики для README
 ├── scikit_uplift/                 # модифицированная библиотека scikit-uplift (клонируется отдельно)
 └── README.md
 ```
@@ -93,3 +126,5 @@ git clone https://github.com/yandex-praktikum/mle-scikit-uplift-2025 scikit_upli
 ```bash
 jupyter lab
 ```
+
+Окружение можно также собрать в Docker, см. `experiments/README.md`.
